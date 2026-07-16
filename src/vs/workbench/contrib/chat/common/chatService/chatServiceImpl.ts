@@ -178,6 +178,14 @@ export class ChatService extends Disposable implements IChatService {
 		return this._transferredSessionResource;
 	}
 
+	private _pendingNewSessionType: string | undefined;
+	public get pendingNewSessionType(): string | undefined {
+		return this._pendingNewSessionType;
+	}
+	public setPendingNewSessionType(sessionType: string | undefined): void {
+		this._pendingNewSessionType = sessionType;
+	}
+
 	private readonly _onDidSubmitRequest = this._register(new Emitter<{ readonly chatSessionResource: URI; readonly message?: IParsedChatRequest }>());
 	public readonly onDidSubmitRequest = this._onDidSubmitRequest.event;
 

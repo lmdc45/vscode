@@ -20,13 +20,15 @@ import { IChatEditingSession } from '../../common/editing/chatEditingService.js'
 import { IChatService } from '../../common/chatService/chatService.js';
 import { ChatAgentLocation, ChatModeKind } from '../../common/constants.js';
 import { ChatViewId, IChatWidgetService } from '../chat.js';
+import { ChatViewPane } from '../widgetHosts/viewPane/chatViewPane.js';
 import { EditingSessionAction, EditingSessionActionContext, getEditingSessionContext } from '../chatEditing/chatEditingActions.js';
 import { ACTION_ID_NEW_CHAT, ACTION_ID_NEW_EDIT_SESSION, CHAT_CATEGORY, clearChatSessionPreservingType, handleCurrentEditingSession } from './chatActions.js';
 import { clearChatEditor } from './chatClear.js';
 import { AgentSessionProviders, AgentSessionsViewerOrientation } from '../agentSessions/agentSessions.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { IChatSessionsService } from '../../common/chatSessionsService.js';
+import { IChatSessionsService, localChatSessionType } from '../../common/chatSessionsService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IAgentHostEnablementService } from '../../../../../platform/agentHost/common/agentHostEnablementService.js';
 
 export interface INewEditSessionActionContext {
 
@@ -193,6 +195,27 @@ export function registerNewChatActions() {
 
 			// Context from toolbar or lastFocusedWidget
 			const context = getEditingSessionContext(accessor, args);
+
+			// When no chat widget is open yet, revealing the view would resolve
+			// the computed default provider (a non-local harness when the agent
+			// host is enabled) and wait for it to activate. Hint the chat view to
+			// open directly into a new local session instead, so it never
+			// consults the agent host. See ChatViewPane#_applyModel.
+			if (!context?.chatWidget) {
+				const chatService = accessor.get(IChatService);
+				const viewsService = accessor.get(IViewsService);
+				chatService.setPendingNewSessionType(localChatSessionType);
+				const view = await viewsService.openView(ChatViewId, true) as ChatViewPane | null;
+				// If the view was already open, its initial render already ran and
+				// won't consume the hint, so start the local session explicitly.
+				if (chatService.pendingNewSessionType) {
+					chatService.setPendingNewSessionType(undefined);
+					await view?.startNewLocalSession();
+				}
+				view?.focusInput();
+				return;
+			}
+
 			await runNewChatAction(accessor, context, executeCommandContext, AgentSessionProviders.Local);
 		}
 	});
@@ -321,6 +344,7 @@ async function runNewChatAction(
 	const chatSessionsService = accessor.get(IChatSessionsService);
 	const storageService = accessor.get(IStorageService);
 	const workspaceContextService = accessor.get(IWorkspaceContextService);
+	const agentHostEnablementService = accessor.get(IAgentHostEnablementService);
 
 	const { editingSession, chatWidget: widget } = context ?? {};
 	if (!widget) {
@@ -337,7 +361,7 @@ async function runNewChatAction(
 	await editingSession?.stop();
 
 	// Create a new session, preserving the session type (or using the specified one)
-	await clearChatSessionPreservingType(widget, viewsService, sessionType, configurationService, chatSessionsService, storageService, workspaceContextService.getWorkspace());
+	await clearChatSessionPreservingType(widget, viewsService, sessionType, configurationService, chatSessionsService, storageService, workspaceContextService.getWorkspace(), agentHostEnablementService.enabled);
 
 	widget.attachmentModel.clear(true);
 	widget.focusInput();

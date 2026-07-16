@@ -1813,6 +1813,16 @@ export interface IChatService {
 	_serviceBrand: undefined;
 	transferredSessionResource: URI | undefined;
 
+	/**
+	 * A transient hint for the next new chat view session. When set, the chat
+	 * view opens directly into a new session of this type instead of resolving
+	 * the computed default provider. This lets an explicit request (e.g. New
+	 * Local Chat) be honored up front, without waiting for a non-local harness
+	 * to activate. Consumed and cleared by the view when it opens.
+	 */
+	readonly pendingNewSessionType: string | undefined;
+	setPendingNewSessionType(sessionType: string | undefined): void;
+
 	readonly onDidSubmitRequest: Event<{ readonly chatSessionResource: URI; readonly message?: IParsedChatRequest }>;
 
 	readonly onDidCreateModel: Event<IChatModel>;

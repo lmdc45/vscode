@@ -20,6 +20,10 @@ export class MockChatService implements IChatService {
 	_serviceBrand: undefined;
 	editingSessions = [];
 	transferredSessionResource = undefined;
+	pendingNewSessionType = undefined;
+	setPendingNewSessionType(_sessionType: string | undefined): void {
+		throw new Error('Method not implemented.');
+	}
 	readonly onDidSubmitRequest = Event.None;
 
 	private readonly _onDidCreateModel = new Emitter<IChatModel>();

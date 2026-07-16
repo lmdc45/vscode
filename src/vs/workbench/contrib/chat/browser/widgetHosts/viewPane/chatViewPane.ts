@@ -51,7 +51,7 @@ import { CHAT_PROVIDER_ID } from '../../../common/participants/chatParticipantCo
 import { IChatModelReference, IChatService } from '../../../common/chatService/chatService.js';
 import { IChatSessionsService, localChatSessionType } from '../../../common/chatSessionsService.js';
 import { LocalChatSessionUri, getChatSessionType } from '../../../common/model/chatUri.js';
-import { ChatAgentLocation, ChatConfiguration, ChatModeKind, getComputedDefaultSessionType, getDefaultNewChatSessionResource, getDefaultNewChatSessionType, isEditorLocalAgentEnabled } from '../../../common/constants.js';
+import { ChatAgentLocation, ChatConfiguration, ChatModeKind, getDefaultNewChatSessionResource, getDefaultNewChatSessionType } from '../../../common/constants.js';
 import { AgentSessionsControl } from '../../agentSessions/agentSessionsControl.js';
 import { ACTION_ID_NEW_CHAT } from '../../actions/chatActions.js';
 import { ChatWidget } from '../../widget/chatWidget.js';
@@ -65,6 +65,7 @@ import { IActivityService, ProgressBadge } from '../../../../../services/activit
 import { disposableTimeout } from '../../../../../../base/common/async.js';
 import { AgentSessionsFilter, AgentSessionsGrouping } from '../../agentSessions/agentSessionsFilter.js';
 import { IAgentSessionsService } from '../../agentSessions/agentSessionsService.js';
+import { IAgentHostEnablementService } from '../../../../../../platform/agentHost/common/agentHostEnablementService.js';
 import { HoverPosition } from '../../../../../../base/browser/ui/hover/hoverWidget.js';
 import { IAgentSession } from '../../agentSessions/agentSessionsModel.js';
 import { ChatEntitlementContextKeys, IChatEntitlementService } from '../../../../../services/chat/common/chatEntitlementService.js';
@@ -149,6 +150,7 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		@IVoicePlaybackService _voicePlaybackService: IVoicePlaybackService,
 		@IWorkbenchEnvironmentService _workbenchEnvironmentService: IWorkbenchEnvironmentService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IAgentHostEnablementService private readonly agentHostEnablementService: IAgentHostEnablementService,
 	) {
 		super(options, keybindingService2, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -1048,6 +1050,19 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 	}
 
 	private async _applyModel(): Promise<void> {
+		// An explicit "new session of this type" hint (e.g. from New Local Chat)
+		// takes precedence over restoring a session or resolving the computed
+		// default provider, so the view opens directly into the requested type
+		// without waiting for a non-local harness to activate. Cleared
+		// synchronously here so a later `_applyModel` (e.g. from an agent change)
+		// does not re-consume a stale hint.
+		const pendingType = this.chatService.pendingNewSessionType;
+		if (pendingType === localChatSessionType) {
+			this.chatService.setPendingNewSessionType(undefined);
+			await this.showModel(CancellationToken.None, this.chatService.startNewLocalSession(ChatAgentLocation.Chat, { debugOwner: 'ChatViewPane#applyModel/pendingLocal' }));
+			return;
+		}
+
 		const modelRef = await this.acquireTransferredOrPersistedSession(CancellationToken.None, 'ChatViewPane#applyModel');
 		await this.showModel(CancellationToken.None, modelRef, true, !modelRef);
 	}
@@ -1063,18 +1078,18 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 	}
 
 	/**
-	 * When the experimental `chat.editor.defaultProvider` setting selects a
-	 * provider other than local and that contribution is registered, return a
-	 * new session reference for it instead of the built-in local provider.
-	 * Returns `undefined` to fall back to `startNewLocalSession`.
+	 * When the remembered or computed default session type is a non-local
+	 * provider (for example when the agent host is enabled), return a new session
+	 * reference for it instead of the built-in local provider. Returns
+	 * `undefined` to fall back to `startNewLocalSession`.
 	 */
 	private async acquireDefaultNewSession(token: CancellationToken): Promise<IChatModelReference | undefined> {
 		const workspace = this.workspaceContextService.getWorkspace();
-		const defaultType = getDefaultNewChatSessionType(this.configurationService, this.chatSessionsService, this.storageService, workspace);
+		const defaultType = getDefaultNewChatSessionType(this.configurationService, this.chatSessionsService, this.storageService, workspace, this.agentHostEnablementService.enabled);
 		if (defaultType === localChatSessionType) {
 			return undefined;
 		}
-		const resource = getDefaultNewChatSessionResource(this.configurationService, this.chatSessionsService, this.storageService, workspace);
+		const resource = getDefaultNewChatSessionResource(this.configurationService, this.chatSessionsService, this.storageService, workspace, this.agentHostEnablementService.enabled);
 		try {
 			return await this.chatService.acquireOrLoadSession(resource, ChatAgentLocation.Chat, token, 'ChatViewPane#acquireDefaultNewSession');
 		} catch (error) {
@@ -1104,10 +1119,8 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 
 	private shouldSkipRestoredLocalSession(sessionResource: URI, model: IChatModel): boolean {
 		const workspace = this.workspaceContextService.getWorkspace();
-		const defaultType = getComputedDefaultSessionType(this.configurationService, this.chatSessionsService, workspace);
-		const prefersAgentHostCopilot = !isEditorLocalAgentEnabled(this.configurationService, workspace)
-			&& this.configurationService.getValue<string>(ChatConfiguration.EditorDefaultProvider) === 'copilotAh';
-		return (defaultType !== localChatSessionType || prefersAgentHostCopilot)
+		const defaultType = getDefaultNewChatSessionType(this.configurationService, this.chatSessionsService, this.storageService, workspace, this.agentHostEnablementService.enabled);
+		return defaultType !== localChatSessionType
 			&& getChatSessionType(sessionResource) === localChatSessionType
 			&& !model.hasRequests;
 	}
